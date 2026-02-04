@@ -1,0 +1,119 @@
+name: Build ROMs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-genesis:
+    name: Build Genesis Games
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build Genesis games with SGDK
+        run: |
+          mkdir -p dist/genesis
+          
+          for game_dir in genesis/*/; do
+            if [ -d "${game_dir}src" ]; then
+              game=$(basename "$game_dir")
+              echo "=== Building $game ==="
+              
+              # Fix permissions for SGDK user (uid 100)
+              chmod -R 777 "${game_dir}"
+              
+              # Run SGDK Docker build - must override entrypoint!
+              docker run --rm \
+                --entrypoint /bin/sh \
+                -v "$(pwd)/${game_dir}:/src" \
+                ghcr.io/stephane-d/sgdk:latest \
+                -c "cd /src && make -f \$SGDK_PATH/makefile.gen" || true
+              
+              # Check for output
+              if [ -f "${game_dir}out/rom.bin" ]; then
+                cp "${game_dir}out/rom.bin" "dist/genesis/${game}.bin"
+                echo "✓ Built ${game}.bin"
+              else
+                echo "✗ Failed to build $game"
+              fi
+            fi
+          done
+          
+          echo ""
+          echo "=== Build Summary ==="
+          ls -la dist/genesis/ || echo "No ROMs built"
+      
+      - name: Upload Genesis ROMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: genesis-roms
+          path: dist/genesis/*.bin
+          if-no-files-found: warn
+
+  release:
+    name: Create Release
+    needs: [build-genesis]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: genesis-roms
+          path: dist/genesis
+        continue-on-error: true
+      
+      - name: Check for ROMs
+        id: check
+        run: |
+          if ls dist/genesis/*.bin 1>/dev/null 2>&1; then
+            echo "has_roms=true" >> $GITHUB_OUTPUT
+            echo "Found ROMs:"
+            ls -la dist/genesis/
+          else
+            echo "has_roms=false" >> $GITHUB_OUTPUT
+            echo "No ROMs found"
+          fi
+      
+      - name: Create zip
+        if: steps.check.outputs.has_roms == 'true'
+        run: |
+          cd dist/genesis
+          zip -r ../../free-retro-games.zip *.bin
+      
+      - name: Create Release
+        if: steps.check.outputs.has_roms == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          body: |
+            Automated build of free retro games.
+            
+            ## Games
+            - Tank Battle
+            - Battle 4Tris  
+            - Pong
+            - Snake Arena
+            - Space Shooter
+            - Breakout
+            
+            Load \`.bin\` files in any Genesis emulator or [retroterm](https://github.com/monteslu/retroterm).
+          files: |
+            free-retro-games.zip
+            dist/genesis/*.bin
+          draft: false
+          prerelease: false
