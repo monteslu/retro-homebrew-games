@@ -1,4 +1,6 @@
 # Build outputs
 **/out/
-**/src/boot/
 **/res/resources.h
+
+# Boot files (except rom_head.c which we customize)
+**/src/boot/sega.s
