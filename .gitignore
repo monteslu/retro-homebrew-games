@@ -1,0 +1,4 @@
+# Build outputs
+**/out/
+**/src/boot/
+**/res/resources.h
